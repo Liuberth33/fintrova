@@ -13,18 +13,32 @@ def _sma(closes: pd.Series, window: int) -> float | None:
     return round(closes.rolling(window).mean().iloc[-1], 4)
 
 
-def _rsi(closes: pd.Series, period: int = 14) -> float | None:
-    if len(closes) < period + 1:
-        return None
+def _rsi_series(closes: pd.Series, period: int = 14) -> pd.Series:
     delta = closes.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(period).mean().iloc[-1]
-    avg_loss = loss.rolling(period).mean().iloc[-1]
-    if avg_loss == 0:
-        return 100.0
-    rs = avg_gain / avg_loss
-    return round(100 - (100 / (1 + rs)), 2)
+    avg_gain = gain.rolling(period).mean()
+    avg_loss = loss.rolling(period).mean()
+    rs = avg_gain / avg_loss.replace(0, float("nan"))
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.where(avg_loss != 0, 100.0)
+
+
+def _rsi(closes: pd.Series, period: int = 14) -> float | None:
+    if len(closes) < period + 1:
+        return None
+    value = _rsi_series(closes, period).iloc[-1]
+    return round(value, 2) if pd.notna(value) else None
+
+
+def rsi_series(history: list[dict], period: int = 14) -> pd.DataFrame:
+    """Serie completa de RSI a lo largo de todo el historial (no solo el
+    último valor), indexada por fecha — pensada para backtesting, donde hay
+    que ubicar cada cruce histórico hacia sobrecompra/sobreventa, no solo el
+    estado actual."""
+    frame = _to_frame(history)
+    frame["rsi"] = _rsi_series(frame["close"], period)
+    return frame[["date", "close", "rsi"]].dropna(subset=["rsi"]).reset_index(drop=True)
 
 
 def _macd(closes: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> dict | None:

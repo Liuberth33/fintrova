@@ -27,10 +27,13 @@ Fintrova entiende la pregunta, decide qué datos necesita, los busca en tiempo r
 ## ✨ Features
 
 - 💬 **Chat en lenguaje natural** con tool calling real (Claude decide qué herramientas llamar)
+- 🧵 **Memoria de conversación** — persiste en SQLite, sobrevive reinicios del servidor, y el agente resuelve seguimientos ("¿y su RSI?") con contexto real
 - 📈 **Precio e historial** de acciones, ETFs, índices, forex, cripto y materias primas
 - 📊 **Indicadores técnicos** — RSI, MACD, medias móviles (SMA20/SMA50)
 - 🚨 **Alertas de señales** — sobrecompra/sobreventa, momentum, tendencia
-- 📰 **Noticias financieras** en tiempo real por activo
+- 📉 **Backtesting de señales** — mide qué retorno tuvo el precio históricamente después de cada señal de RSI, con tasa de acierto, cacheado 24h
+- 📰 **Noticias financieras** en tiempo real por activo, con **síntesis de sentimiento** (no solo titulares)
+- 🖼️ **Lectura de gráficos con visión** — sube un screenshot de un chart y Claude lo analiza directamente
 - 🛡️ **Manejo de errores real** — rate limits, símbolos inválidos y fallos de red se explican en lenguaje natural, nunca un crash
 - 🎨 **Identidad visual propia** — el avatar del agente literalmente "escala" la línea de precios mientras piensa
 
@@ -128,10 +131,13 @@ Fintrova understands the question, figures out what data it needs, fetches it in
 ## ✨ Features
 
 - 💬 **Natural-language chat** with real tool calling (Claude decides which tools to call)
+- 🧵 **Conversation memory** — persists in SQLite, survives server restarts, and the agent resolves follow-ups ("what about its RSI?") with real context
 - 📈 **Price and history** for stocks, ETFs, indices, forex, crypto, and commodities
 - 📊 **Technical indicators** — RSI, MACD, moving averages (SMA20/SMA50)
 - 🚨 **Signal alerts** — overbought/oversold, momentum, trend
-- 📰 **Real-time financial news** per asset
+- 📉 **Signal backtesting** — measures how price historically performed after each RSI signal, with hit rate, cached 24h
+- 📰 **Real-time financial news** per asset, with **sentiment synthesis** (not just headlines)
+- 🖼️ **Chart reading via vision** — upload a chart screenshot and Claude analyzes it directly
 - 🛡️ **Real error handling** — rate limits, invalid symbols, and network failures get explained in plain language, never a crash
 - 🎨 **Its own visual identity** — the agent's avatar literally "climbs" the price line while it thinks
 

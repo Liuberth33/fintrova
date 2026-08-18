@@ -164,20 +164,25 @@ def get_price(symbol: str) -> dict:
     return result
 
 
-def get_history(symbol: str, days: int = 30) -> list[dict]:
+def get_history(symbol: str, days: int = 30, full: bool = False) -> list[dict]:
     """Historial de precios de los últimos `days` días/períodos. Acepta
     acciones, índices (vía ETF), forex, cripto y materias primas. Para
     materias primas que solo tienen granularidad mensual, `days` se
-    interpreta como número de períodos, no de días calendario."""
+    interpreta como número de períodos, no de días calendario.
+
+    `full`, si es True, trae el histórico completo disponible (hasta ~20
+    años en acciones/forex/cripto) en vez de los ~100 puntos recientes, e
+    ignora `days` (no trunca). Pensado para backtesting, no para uso normal
+    del agente — cuesta lo mismo en llamadas a la API (sigue siendo 1 sola
+    llamada), pero la respuesta es mucho más pesada."""
     original = symbol
     resolved = _resolve_alias(symbol)
+    outputsize = "full" if full else "compact"
 
     if _is_commodity(resolved):
         _, data = _get_commodity_series(resolved)
-        return [
-            {"date": point["date"], "close": float(point["value"])}
-            for point in data[:days]
-        ]
+        points = data if full else data[:days]
+        return [{"date": point["date"], "close": float(point["value"])} for point in points]
 
     if _is_crypto_pair(resolved):
         from_currency, to_currency = resolved.upper().split("/")
@@ -194,7 +199,7 @@ def get_history(symbol: str, days: int = 30) -> list[dict]:
             "function": "FX_DAILY",
             "from_symbol": from_currency,
             "to_symbol": to_currency,
-            "outputsize": "compact",
+            "outputsize": outputsize,
             "apikey": ALPHA_VANTAGE_API_KEY,
         }
         series = _alpha_vantage_get(params).get("Time Series FX (Daily)")
@@ -202,7 +207,7 @@ def get_history(symbol: str, days: int = 30) -> list[dict]:
         params = {
             "function": "TIME_SERIES_DAILY",
             "symbol": resolved.upper(),
-            "outputsize": "compact",
+            "outputsize": outputsize,
             "apikey": ALPHA_VANTAGE_API_KEY,
         }
         series = _alpha_vantage_get(params).get("Time Series (Daily)")
@@ -221,7 +226,7 @@ def get_history(symbol: str, days: int = 30) -> list[dict]:
         for date, values in series.items()
     ]
     history.sort(key=lambda entry: entry["date"], reverse=True)
-    return history[:days]
+    return history if full else history[:days]
 
 
 def _to_google_finance_query(symbol: str) -> str:

@@ -5,6 +5,7 @@ import anthropic
 from dotenv import load_dotenv
 
 from tools.alerts import generate_alert
+from tools.backtest import backtest_rsi_signal
 from tools.indicators import calculate_indicators
 from tools.market_data import get_history, get_news, get_price
 
@@ -19,7 +20,16 @@ SYSTEM_PROMPT = (
     "mercado en lenguaje natural usando datos reales de precios, noticias e "
     "indicadores técnicos. Sé directo y concreto: da el dato, el análisis "
     "técnico si aplica, y evita relleno. Nunca des asesoría financiera "
-    "personalizada de inversión, solo información y análisis técnico."
+    "personalizada de inversión, solo información y análisis técnico.\n\n"
+    "Cuando uses get_news, no te limites a listar los titulares: sintetiza "
+    "el sentimiento neto que reflejan (positivo, negativo, neutral o mixto) "
+    "y explica en una frase por qué — qué noticias pesan más y en qué "
+    "dirección. El usuario quiere una lectura, no una lista cruda.\n\n"
+    "Si el usuario adjunta una imagen de un gráfico de precios, analízala "
+    "directamente con tu visión: identifica patrones, soportes/resistencias "
+    "visibles, tendencia y cualquier indicador que se vea en el chart. Si "
+    "el activo del gráfico es identificable, puedes complementar con datos "
+    "reales llamando a las tools disponibles."
 )
 
 TOOLS = [
@@ -80,9 +90,10 @@ TOOLS = [
     {
         "name": "get_news",
         "description": (
-            "Noticias financieras recientes relacionadas a un activo. Mejor cobertura "
-            "en acciones, índices, forex y cripto; materias primas suelen tener poco "
-            "o ningún resultado."
+            "Noticias financieras recientes relacionadas a un activo. Úsala para poder "
+            "sintetizar el sentimiento de mercado del activo (positivo/negativo/mixto), "
+            "no solo para listar titulares. Mejor cobertura en acciones, índices, forex "
+            "y cripto; materias primas suelen tener poco o ningún resultado."
         ),
         "input_schema": {
             "type": "object",
@@ -167,6 +178,37 @@ TOOLS = [
             "required": ["symbol"],
         },
     },
+    {
+        "name": "backtest_rsi_signal",
+        "description": (
+            "Backtest de la señal de RSI(14) sobrecompra/sobreventa sobre los últimos "
+            "~100 días disponibles de un activo (límite del plan gratuito de datos, no "
+            "años de historia): mide qué retorno tuvo el precio 5 y 20 días después de "
+            "cada vez que el RSI cruzó por debajo de 30 o por encima de 70 en esa ventana, "
+            "con tasa de acierto. Úsala cuando el usuario pregunte qué tan confiable es "
+            "una señal o pida evidencia en vez de solo el estado actual. Es estadística "
+            "descriptiva sobre una muestra reciente y chica, no una garantía ni una "
+            "predicción — acláraselo al usuario, y menciona si el sample_size es bajo."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": (
+                        "Símbolo del activo. Acepta: tickers de acciones/ETFs (AAPL, SPY), "
+                        "índices por su nombre común (S&P 500, Nasdaq, Dow — se resuelven vía "
+                        "su ETF de referencia), pares de forex (EUR/USD), criptomonedas en "
+                        "formato par (BTC/USD, ETH/USD), y materias primas por nombre común "
+                        "(petróleo/WTI, brent, gas natural, cobre, trigo, maíz, algodón, "
+                        "azúcar, café). No soporta metales preciosos (oro, plata) — ninguna "
+                        "fuente de datos disponible los cubre."
+                    ),
+                },
+            },
+            "required": ["symbol"],
+        },
+    },
 ]
 
 
@@ -185,6 +227,7 @@ TOOL_FUNCTIONS = {
     "get_news": lambda symbol, limit=5: get_news(symbol, limit=limit),
     "get_indicators": _get_indicators,
     "get_alerts": _get_alerts,
+    "backtest_rsi_signal": lambda symbol: backtest_rsi_signal(symbol),
 }
 
 
@@ -210,13 +253,44 @@ def _friendly_error_message(error: Exception) -> str:
     return f"Ocurrió un error inesperado: {error}"
 
 
-def ask(question: str) -> dict:
+MAX_HISTORY_MESSAGES = 12
+
+
+def ask(question: str, history: list[dict] | None = None, image: dict | None = None) -> dict:
     """Envía una pregunta al agente y devuelve {"text": ..., "news": [...]},
     resolviendo internamente cualquier llamada a tools que Claude decida
     hacer. `news` trae los artículos que el agente haya consultado con
     get_news durante la conversación, para mostrarlos como tarjetas en la UI
-    en vez de solo texto plano."""
-    messages = [{"role": "user", "content": question}]
+    en vez de solo texto plano.
+
+    `history` son los turnos previos (formato [{"role": "user"|"assistant",
+    "content": str}, ...], sin las llamadas a tools internas) para que el
+    agente pueda resolver preguntas de seguimiento ("¿y el RSI?") con
+    contexto real. Se recorta a los últimos MAX_HISTORY_MESSAGES para no
+    dejar crecer el costo de tokens sin límite en una conversación larga.
+
+    `image`, si se pasa, es {"media_type": "image/png", "data": <base64>} —
+    un screenshot de chart que Claude analiza directamente con su visión
+    nativa (no es una tool, es comprensión multimodal del mensaje mismo).
+    Solo aplica al turno actual, no se reenvía en `history` en turnos
+    futuros para no inflar el costo de tokens de la conversación."""
+    past_turns = [
+        {"role": turn["role"], "content": turn["content"]}
+        for turn in (history or [])[-MAX_HISTORY_MESSAGES:]
+    ]
+
+    if image:
+        current_turn_content = [
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": image["media_type"], "data": image["data"]},
+            },
+            {"type": "text", "text": question},
+        ]
+    else:
+        current_turn_content = question
+
+    messages = past_turns + [{"role": "user", "content": current_turn_content}]
     news: list[dict] = []
 
     while True:
