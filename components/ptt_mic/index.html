@@ -3,9 +3,20 @@
 <head>
 <meta charset="utf-8">
 <style>
-  html, body { margin: 0; padding: 0; background: transparent; font-family: sans-serif; }
-  #btn {
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    font-family: sans-serif;
     width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+  }
+  #btn {
+    width: 46px;
     height: 38px;
     border-radius: 8px;
     border: 1px solid rgba(49, 51, 63, 0.2);
@@ -17,7 +28,7 @@
     justify-content: center;
     user-select: none;
     -webkit-user-select: none;
-    touch-action: none;
+    pointer-events: none; /* el body captura el puntero, no el botón — ver abajo */
     transition: background 0.15s, transform 0.1s;
   }
   #btn.recording {
@@ -28,9 +39,8 @@
     background: #8a8a8a;
     opacity: 0.85;
   }
-  #btn:disabled {
+  #btn.disabled {
     opacity: 0.5;
-    cursor: not-allowed;
   }
 </style>
 </head>
@@ -38,15 +48,26 @@
 <button id="btn" type="button" title="Mantén presionado para hablar">🎙️</button>
 <script>
 // Componente Streamlit "a mano" (sin build step, sin streamlit-component-lib):
-// implementa el protocolo postMessage directamente. Push-to-talk real
-// (mousedown/touchstart en el botón empieza a grabar; mouseup/touchend
-// escuchados en window, no solo en el botón, detienen) usando la Web
-// Speech API nativa del navegador — sin backend de transcripción propio
-// ni servicios de terceros no oficiales.
+// implementa el protocolo postMessage directamente.
+//
+// Push-to-talk real con Pointer Events + setPointerCapture: el botón vive
+// en un iframe de solo unos px — en un gesto real de "mantener presionado"
+// la mano tiembla lo suficiente como para que el cursor salga de esa área
+// chica, y ahí el mouseup/touchend deja de dispararle al botón (o incluso
+// a la ventana del iframe entera, los eventos de mouse no cruzan de un
+// iframe a la página principal). setPointerCapture en el <body> completo
+// (que llena todo el iframe) resuelve esto de forma estándar: una vez que
+// se captura el puntero al presionar, TODOS los eventos de ese puntero
+// —incluido soltar— quedan garantizados para este documento sin importar
+// a dónde se mueva el cursor dentro del iframe. Además hay un timeout duro
+// como red de seguridad por si el cursor de verdad sale del iframe.
+const body = document.body;
 const btn = document.getElementById("btn");
 let recognition = null;
 let lang = "es-ES";
 let listening = false;
+let hardStopTimer = null;
+const MAX_RECORDING_MS = 15000;
 
 function post(payload) {
   window.parent.postMessage(Object.assign({ isStreamlitMessage: true }, payload), "*");
@@ -74,7 +95,7 @@ const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRec
 
 if (!SpeechRecognitionImpl) {
   btn.textContent = "🎙️ N/D";
-  btn.disabled = true;
+  btn.classList.add("disabled");
   btn.title = "Tu navegador no soporta reconocimiento de voz (usa Chrome o Edge).";
 } else {
   let fullTranscript = "";
@@ -84,12 +105,9 @@ if (!SpeechRecognitionImpl) {
     fullTranscript = "";
     recognition = new SpeechRecognitionImpl();
     recognition.lang = lang;
-    // continuous=true es la parte clave: sin esto, el navegador decide por
-    // su cuenta cuándo "terminaste de hablar" (apenas detecta una pausa) y
-    // corta la sesión sola, en vez de esperar a que sueltes el botón —
-    // eso se sentía como un corte fijo a los ~5s en frases con pausas
-    // naturales. Con continuous=true sigue escuchando y acumulando
-    // resultados hasta que se llama recognition.stop() explícitamente.
+    // continuous=true: sin esto, el navegador decide solo cuándo
+    // "terminaste de hablar" (apenas detecta una pausa) y corta la sesión,
+    // en vez de esperar a que sueltes el botón.
     recognition.continuous = true;
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
@@ -103,6 +121,7 @@ if (!SpeechRecognitionImpl) {
     };
     recognition.onerror = () => {
       listening = false;
+      clearTimeout(hardStopTimer);
       btn.classList.remove("recording", "processing");
     };
     recognition.onend = () => {
@@ -111,9 +130,10 @@ if (!SpeechRecognitionImpl) {
       // de Chrome sigue "cerrando" la sesión con su backend en la nube
       // antes de soltar el resultado final. Eso es inherente a la Web
       // Speech API en modo continuous, no un bug del botón — pero el botón
-      // sí puede (y debía) dejar de verse "pegado en grabación" apenas se
-      // suelta, en vez de quedarse con el estado "recording" hasta acá.
+      // sí deja de verse "pegado en grabación" apenas se suelta (ver
+      // stopRec), en vez de quedarse así hasta que esto llegue.
       listening = false;
+      clearTimeout(hardStopTimer);
       btn.classList.remove("recording", "processing");
       if (fullTranscript.trim()) {
         sendValue({ text: fullTranscript.trim(), id: Date.now() });
@@ -124,6 +144,11 @@ if (!SpeechRecognitionImpl) {
       listening = true;
       btn.classList.remove("processing");
       btn.classList.add("recording");
+      // Red de seguridad: si por lo que sea nunca se detecta el soltar,
+      // esto igual corta la grabación en vez de dejarla escuchando ruido
+      // ambiente indefinidamente.
+      clearTimeout(hardStopTimer);
+      hardStopTimer = setTimeout(stopRec, MAX_RECORDING_MS);
     } catch (err) {
       listening = false;
     }
@@ -133,25 +158,22 @@ if (!SpeechRecognitionImpl) {
     if (recognition && listening) {
       // Feedback visual inmediato: al soltar, se ve al toque que dejó de
       // grabar y está procesando, en vez de seguir pareciendo "grabando"
-      // durante los varios segundos que tarda onend en llegar de verdad.
+      // los varios segundos que tarda onend en llegar de verdad.
       btn.classList.remove("recording");
       btn.classList.add("processing");
       recognition.stop();
     }
   }
 
-  btn.addEventListener("mousedown", startRec);
-  btn.addEventListener("touchstart", (e) => { e.preventDefault(); startRec(); });
-
-  // El soltar se escucha en window, no solo en el botón: si el cursor se
-  // corre un poco mientras se mantiene presionado (normal en un gesto de
-  // "mantener apretado"), el mouseup puede terminar disparando sobre otro
-  // elemento y nunca llegarle al botón — dejando la grabación realmente
-  // encendida de fondo aunque visualmente pareciera soltado.
-  window.addEventListener("mouseup", stopRec);
-  window.addEventListener("touchend", (e) => { e.preventDefault(); stopRec(); });
-  window.addEventListener("touchcancel", (e) => { e.preventDefault(); stopRec(); });
-  btn.addEventListener("touchcancel", (e) => { e.preventDefault(); stopRec(); });
+  body.addEventListener("pointerdown", (e) => {
+    body.setPointerCapture(e.pointerId);
+    startRec();
+  });
+  body.addEventListener("pointerup", stopRec);
+  body.addEventListener("pointercancel", stopRec);
+  // Salvavidas final: si el puntero se pierde por completo (cambia de
+  // ventana, alt-tab, etc.) sin disparar pointerup/pointercancel.
+  window.addEventListener("blur", stopRec);
 }
 </script>
 </body>

@@ -84,13 +84,25 @@ with st.sidebar:
 
     st.divider()
 
-    # Fuerza que el botón del nombre y el de la papelera midan lo mismo de
-    # alto en cada fila — por defecto quedaban descuadrados entre sí.
+    # Altura fija en ambos botones de la fila + evita que un nombre largo
+    # (auto-generado desde el primer mensaje, puede ser largo) haga wrap a
+    # 2 líneas y crezca el botón — el texto real vive en un <p> anidado
+    # varios niveles adentro del <button> (verificado en el DOM: <button>
+    # > div > span > div[data-testid=stMarkdownContainer] > p), así que el
+    # overflow tiene que ir en el <p>, no alcanza con ponerlo en el <button>.
     st.markdown(
         """
         <style>
-        [class*="st-key-conv_row_"] div[data-testid="stButton"] button {
-            height: 38px;
+        [class*="st-key-conv_row_"] button {
+            height: 38px !important;
+            min-height: 38px !important;
+            max-height: 38px !important;
+        }
+        [class*="st-key-conv_row_"] button p {
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            max-width: 100%;
         }
         </style>
         """,
