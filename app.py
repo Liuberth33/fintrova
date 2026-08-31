@@ -3,6 +3,7 @@ import html
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 import db
 from agent import ask
@@ -61,7 +62,7 @@ st.markdown(
 # activa en esta pestaña del navegador.
 if "conversation_id" not in st.session_state:
     existing = db.list_conversations()
-    st.session_state.conversation_id = existing[0]["id"] if existing else db.create_conversation("Conversación 1")
+    st.session_state.conversation_id = existing[0]["id"] if existing else db.create_conversation("Nueva conversación")
     st.session_state.messages = db.load_messages(st.session_state.conversation_id)
 
 
@@ -73,46 +74,46 @@ def _switch_conversation(conversation_id: int) -> None:
 with st.sidebar:
     st.subheader("💬 Conversaciones")
 
-    if st.session_state.get("_creating_conversation"):
-        new_name = st.text_input(
-            "Nombre de la conversación", key="_new_conversation_name",
-            label_visibility="collapsed", placeholder="Nombre de la conversación",
-        )
-        create_col, cancel_col = st.columns(2)
-        with create_col:
-            if st.button("Crear", key="_confirm_create", use_container_width=True):
-                name = new_name.strip() or f"Conversación {len(db.list_conversations()) + 1}"
-                new_id = db.create_conversation(name)
-                st.session_state._creating_conversation = False
-                _switch_conversation(new_id)
-                st.rerun()
-        with cancel_col:
-            if st.button("Cancelar", key="_cancel_create", use_container_width=True):
-                st.session_state._creating_conversation = False
-                st.rerun()
-    else:
-        if st.button("➕ Nueva conversación", use_container_width=True):
-            st.session_state._creating_conversation = True
-            st.rerun()
+    # Sin pedir nombre — se crea al toque y se autobautiza sola con el
+    # primer mensaje real (ver db._maybe_auto_name), igual que un chat
+    # nuevo en ChatGPT/Claude.
+    if st.button("➕ Nueva conversación", use_container_width=True):
+        new_id = db.create_conversation("Nueva conversación")
+        _switch_conversation(new_id)
+        st.rerun()
 
     st.divider()
 
+    # Fuerza que el botón del nombre y el de la papelera midan lo mismo de
+    # alto en cada fila — por defecto quedaban descuadrados entre sí.
+    st.markdown(
+        """
+        <style>
+        [class*="st-key-conv_row_"] div[data-testid="stButton"] button {
+            height: 38px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     for conv in db.list_conversations():
         is_active = conv["id"] == st.session_state.conversation_id
-        name_col, delete_col = st.columns([5, 1])
-        with name_col:
-            label = f"● {conv['name']}" if is_active else conv["name"]
-            if st.button(label, key=f"_open_conv_{conv['id']}", use_container_width=True):
-                _switch_conversation(conv["id"])
-                st.rerun()
-        with delete_col:
-            if st.button("🗑️", key=f"_delete_conv_{conv['id']}"):
-                db.delete_conversation(conv["id"])
-                if is_active:
-                    remaining = db.list_conversations()
-                    next_id = remaining[0]["id"] if remaining else db.create_conversation("Conversación 1")
-                    _switch_conversation(next_id)
-                st.rerun()
+        with st.container(key=f"conv_row_{conv['id']}"):
+            name_col, delete_col = st.columns([5, 1])
+            with name_col:
+                label = f"● {conv['name']}" if is_active else conv["name"]
+                if st.button(label, key=f"_open_conv_{conv['id']}", use_container_width=True):
+                    _switch_conversation(conv["id"])
+                    st.rerun()
+            with delete_col:
+                if st.button("🗑️", key=f"_delete_conv_{conv['id']}", use_container_width=True):
+                    db.delete_conversation(conv["id"])
+                    if is_active:
+                        remaining = db.list_conversations()
+                        next_id = remaining[0]["id"] if remaining else db.create_conversation("Nueva conversación")
+                        _switch_conversation(next_id)
+                    st.rerun()
 
 
 def render_news(news: list[dict]) -> None:
@@ -178,8 +179,6 @@ st.markdown(
     <style>
     .st-key-mic_dock {
         position: fixed;
-        bottom: 18px;
-        right: 90px;
         width: 46px;
         z-index: 1000000; /* el header nativo de Streamlit usa 999990 */
     }
@@ -192,6 +191,41 @@ with st.container(key="mic_dock"):
         language="es-ES" if "Español" in voice_lang_label else "en-US",
         key="mic_input",
     )
+
+# Un offset fijo (right: Npx) no sirve porque el chat_input vive en una
+# columna centrada de ancho variable, no pegada al borde real de la
+# ventana — con la barra lateral abierta/cerrada o distinto ancho de
+# pantalla el mic quedaba lejos de la flecha. En su lugar, mide la
+# posición real del chat_input en cada resize/rerun y pega el mic justo a
+# su derecha. st.markdown con <script> no ejecuta JS (Streamlit lo inserta
+# vía innerHTML, que ignora <script>) — por eso va en components.html, que
+# sí carga un documento real, y desde ahí se llega al DOM de la página
+# principal vía window.parent (mismo origen, lo mismo que usa
+# components/ptt_mic para postMessage).
+components.html(
+    """
+    <script>
+    (function() {
+      function alignMicDock() {
+        var doc = window.parent.document;
+        var chatInput = doc.querySelector('[data-testid="stChatInput"]');
+        var micDock = doc.querySelector('.st-key-mic_dock');
+        if (!chatInput || !micDock) return;
+        var rect = chatInput.getBoundingClientRect();
+        micDock.style.left = (rect.right + 10) + 'px';
+        micDock.style.top = (rect.top + rect.height / 2 - 19) + 'px';
+      }
+      if (window.parent._fintrovaMicAlignInterval) {
+        clearInterval(window.parent._fintrovaMicAlignInterval);
+      }
+      window.parent.addEventListener('resize', alignMicDock);
+      window.parent._fintrovaMicAlignInterval = setInterval(alignMicDock, 400);
+      alignMicDock();
+    })();
+    </script>
+    """,
+    height=0,
+)
 
 submission = st.chat_input(
     "¿Cómo está el EUR/USD hoy? ¿Hay señal de compra en Apple?",
