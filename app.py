@@ -3,10 +3,10 @@ import html
 from pathlib import Path
 
 import streamlit as st
-from streamlit_mic_recorder import speech_to_text
 
 import db
 from agent import ask
+from voice_component import ptt_mic
 
 db.init_db()
 
@@ -92,13 +92,13 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
         render_news(message.get("news", []))
 
-# Reconocimiento de voz nativo del navegador (Web Speech API vía
-# streamlit-mic-recorder) — sin STT propio ni API key nueva, pero el
-# navegador necesita saber de antemano en qué idioma escuchar, así que hace
-# falta elegirlo antes de grabar (a diferencia del texto, donde el idioma
-# de la pregunta se detecta después, ver agent._reply_language_directive).
-# Solo funciona en navegadores basados en Chromium (Chrome/Edge); Firefox y
-# Safari no implementan esta API del navegador.
+# Micrófono push-to-talk (mantener presionado para hablar, soltar para
+# enviar) — componente propio en components/ptt_mic, ver voice_component.py.
+# El navegador necesita saber de antemano en qué idioma escuchar, así que
+# hace falta elegirlo antes de grabar (a diferencia del texto, donde el
+# idioma de la pregunta se detecta después, ver
+# agent._reply_language_directive). Solo funciona en navegadores basados en
+# Chromium (Chrome/Edge); Firefox y Safari no implementan esta API.
 mic_col, lang_col = st.columns([1, 4])
 with lang_col:
     voice_lang_label = st.selectbox(
@@ -106,12 +106,8 @@ with lang_col:
         label_visibility="collapsed", key="voice_lang",
     )
 with mic_col:
-    voice_text = speech_to_text(
+    voice_text = ptt_mic(
         language="es-ES" if "Español" in voice_lang_label else "en-US",
-        start_prompt="🎙️",
-        stop_prompt="⏹️",
-        just_once=True,
-        use_container_width=True,
         key="mic_input",
     )
 

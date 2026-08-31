@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; font-family: sans-serif; }
+  #btn {
+    width: 100%;
+    height: 38px;
+    border-radius: 8px;
+    border: 1px solid rgba(49, 51, 63, 0.2);
+    background: #EFE9D9;
+    cursor: pointer;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+    transition: background 0.15s, transform 0.1s;
+  }
+  #btn.recording {
+    background: #C08A34;
+    transform: scale(0.97);
+  }
+  #btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+</style>
+</head>
+<body>
+<button id="btn" type="button" title="Mantén presionado para hablar">🎙️</button>
+<script>
+// Componente Streamlit "a mano" (sin build step, sin streamlit-component-lib):
+// implementa el protocolo postMessage directamente. Push-to-talk real
+// (mousedown/touchstart empieza a grabar, mouseup/touchend/mouseleave
+// detiene) usando la Web Speech API nativa del navegador — sin backend de
+// transcripción propio ni servicios de terceros no oficiales.
+const btn = document.getElementById("btn");
+let recognition = null;
+let lang = "es-ES";
+let listening = false;
+
+function post(payload) {
+  window.parent.postMessage(Object.assign({ isStreamlitMessage: true }, payload), "*");
+}
+
+function sendValue(value) {
+  post({ type: "streamlit:setComponentValue", value: value, dataType: "json" });
+}
+
+function setFrameHeight() {
+  post({ type: "streamlit:setFrameHeight", height: 46 });
+}
+
+window.addEventListener("message", (event) => {
+  const data = event.data;
+  if (!data || data.type !== "streamlit:render") return;
+  const args = data.args || {};
+  if (args.language) lang = args.language;
+});
+
+post({ type: "streamlit:componentReady", apiVersion: 1 });
+setFrameHeight();
+
+const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+if (!SpeechRecognitionImpl) {
+  btn.textContent = "🎙️ N/D";
+  btn.disabled = true;
+  btn.title = "Tu navegador no soporta reconocimiento de voz (usa Chrome o Edge).";
+} else {
+  function startRec() {
+    if (listening) return;
+    recognition = new SpeechRecognitionImpl();
+    recognition.lang = lang;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (e) => {
+      const transcript = e.results[0][0].transcript;
+      if (transcript) sendValue({ text: transcript, id: Date.now() });
+    };
+    recognition.onerror = () => {
+      listening = false;
+      btn.classList.remove("recording");
+    };
+    recognition.onend = () => {
+      listening = false;
+      btn.classList.remove("recording");
+    };
+    try {
+      recognition.start();
+      listening = true;
+      btn.classList.add("recording");
+    } catch (err) {
+      listening = false;
+    }
+  }
+
+  function stopRec() {
+    if (recognition && listening) {
+      recognition.stop();
+    }
+  }
+
+  btn.addEventListener("mousedown", startRec);
+  btn.addEventListener("mouseup", stopRec);
+  btn.addEventListener("mouseleave", stopRec);
+  btn.addEventListener("touchstart", (e) => { e.preventDefault(); startRec(); });
+  btn.addEventListener("touchend", (e) => { e.preventDefault(); stopRec(); });
+  btn.addEventListener("touchcancel", (e) => { e.preventDefault(); stopRec(); });
+}
+</script>
+</body>
+</html>
