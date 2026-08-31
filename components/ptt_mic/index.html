@@ -90,23 +90,37 @@ function setFrameHeight() {
   post({ type: "streamlit:setFrameHeight", height: 46 });
 }
 
+const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+let holdTitle = "Mantén presionado para hablar";
+
 window.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || data.type !== "streamlit:render") return;
   const args = data.args || {};
   if (args.language) lang = args.language;
+  // Los textos vienen traducidos desde Python (ver i18n.py) según el
+  // selector de idioma de la interfaz — este componente no decide el
+  // idioma, solo aplica lo que le llega, en cada rerun (no solo al cargar).
+  if (SpeechRecognitionImpl) {
+    if (args.hold_title) {
+      holdTitle = args.hold_title;
+      btn.title = holdTitle;
+    }
+  } else {
+    if (args.unsupported_text) btn.textContent = args.unsupported_text;
+    if (args.unsupported_title) btn.title = args.unsupported_title;
+  }
 });
 
 post({ type: "streamlit:componentReady", apiVersion: 1 });
 setFrameHeight();
-
-const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 if (!SpeechRecognitionImpl) {
   btn.textContent = "🎙️ N/D";
   btn.classList.add("disabled");
   btn.title = "Tu navegador no soporta reconocimiento de voz (usa Chrome o Edge).";
 } else {
+  btn.title = holdTitle;
   let fullTranscript = "";
   // `held`: ¿el usuario sigue con el dedo/mouse presionado ahora mismo?
   // `listening`: ¿hay una sesión de recognition activa ahora mismo?

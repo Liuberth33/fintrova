@@ -7,6 +7,7 @@ import streamlit.components.v1 as components
 
 import db
 from agent import ask
+from i18n import t
 from voice_component import ptt_mic
 
 db.init_db()
@@ -17,6 +18,38 @@ LOGO_MARK = str(ASSETS_DIR / "logo_cropped.png")
 LOGO_THINKING = str(ASSETS_DIR / "logo_thinking.gif")
 
 st.set_page_config(page_title="Fintrova", page_icon=LOGO)
+
+# Selector de idioma — controla dos cosas: (1) el idioma de la interfaz
+# estática (headers, botones, placeholders, texto del mic) vía i18n.t(), y
+# (2) en qué idioma escucha el micrófono (la Web Speech API necesita
+# saberlo de antemano, a diferencia del texto escrito, donde el idioma de
+# cada pregunta se detecta después — ver agent._reply_language_directive,
+# que sigue funcionando independiente de este selector: si escribes en
+# español con la interfaz en inglés, el agente igual te responde en
+# español). Va primero en el código porque el header y el resto de la
+# interfaz ya lo necesitan para saber en qué idioma renderizar — su
+# posición visual (fija arriba a la derecha) la controla el CSS más abajo,
+# no el orden en que aparece acá.
+st.markdown(
+    """
+    <style>
+    .st-key-voice_lang_dock {
+        position: fixed;
+        top: 12px;
+        right: 52px;
+        width: 150px;
+        z-index: 1000000; /* el header nativo de Streamlit usa 999990 */
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+with st.container(key="voice_lang_dock"):
+    voice_lang_label = st.selectbox(
+        "Idioma / Language", ["🇪🇸 Español", "🇺🇸 English"],
+        label_visibility="collapsed", key="voice_lang",
+    )
+lang_code = "en" if "English" in voice_lang_label else "es"
 
 _logo_b64 = base64.b64encode((ASSETS_DIR / "logo_cropped.png").read_bytes()).decode()
 
@@ -50,7 +83,7 @@ st.markdown(
     <div class="app-header">
         <img src="data:image/png;base64,{_logo_b64}" alt="Fintrova">
         <h1>Fintrova</h1>
-        <p>Tu analista financiero personal — precios, noticias y análisis técnico en tiempo real.</p>
+        <p>{t(lang_code, "tagline")}</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -72,12 +105,14 @@ def _switch_conversation(conversation_id: int) -> None:
 
 
 with st.sidebar:
-    st.subheader("💬 Conversaciones")
+    st.subheader(t(lang_code, "conversations_header"))
 
     # Sin pedir nombre — se crea al toque y se autobautiza sola con el
     # primer mensaje real (ver db._maybe_auto_name), igual que un chat
-    # nuevo en ChatGPT/Claude.
-    if st.button("➕ Nueva conversación", use_container_width=True):
+    # nuevo en ChatGPT/Claude. El nombre de cada conversación es contenido
+    # del usuario (su propio primer mensaje), no texto de interfaz — no se
+    # traduce con el selector de idioma.
+    if st.button(t(lang_code, "new_conversation"), use_container_width=True):
         new_id = db.create_conversation("Nueva conversación")
         _switch_conversation(new_id)
         st.rerun()
@@ -136,7 +171,7 @@ with st.sidebar:
 def render_news(news: list[dict]) -> None:
     if not news:
         return
-    with st.expander(f"📰 Noticias relacionadas ({len(news)})"):
+    with st.expander(t(lang_code, "related_news", n=len(news))):
         for article in news:
             st.markdown(f"**[{article['title']}]({article['link']})**")
             st.caption(f"{article['source']} · {article['date']}")
@@ -159,31 +194,6 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
         render_news(message.get("news", []))
 
-# Selector de idioma de voz — el navegador necesita saberlo de antemano
-# (a diferencia del texto, donde el idioma de la pregunta se detecta
-# después, ver agent._reply_language_directive). Flota fijo arriba a la
-# derecha (junto al menú "⋮" nativo de Streamlit) en vez de quedar en el
-# flujo normal, donde terminaba flotando sobre los mensajes ya renderizados.
-st.markdown(
-    """
-    <style>
-    .st-key-voice_lang_dock {
-        position: fixed;
-        top: 12px;
-        right: 52px;
-        width: 150px;
-        z-index: 1000000; /* el header nativo de Streamlit usa 999990 */
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-with st.container(key="voice_lang_dock"):
-    voice_lang_label = st.selectbox(
-        "Idioma de voz", ["🇪🇸 Español", "🇺🇸 English"],
-        label_visibility="collapsed", key="voice_lang",
-    )
-
 # El botón del mic flota fijo junto a la flecha de enviar del chat_input,
 # independiente de ese control — no se puede insertar literalmente dentro
 # del chat_input (es un widget nativo cerrado de Streamlit). Solo funciona
@@ -205,7 +215,10 @@ st.markdown(
 )
 with st.container(key="mic_dock"):
     voice_text = ptt_mic(
-        language="es-ES" if "Español" in voice_lang_label else "en-US",
+        language="es-ES" if lang_code == "es" else "en-US",
+        hold_title=t(lang_code, "mic_hold_title"),
+        unsupported_text=t(lang_code, "mic_unsupported"),
+        unsupported_title=t(lang_code, "mic_unsupported_title"),
         key="mic_input",
     )
 
@@ -245,7 +258,7 @@ components.html(
 )
 
 submission = st.chat_input(
-    "¿Cómo está el EUR/USD hoy? ¿Hay señal de compra en Apple?",
+    t(lang_code, "chat_placeholder"),
     accept_file=True,
     file_type=["png", "jpg", "jpeg"],
 )
@@ -279,15 +292,12 @@ if submission or voice_text:
     thinking = st.empty()
     with thinking.container():
         with st.chat_message("assistant", avatar=LOGO_THINKING):
-            st.markdown("*Consultando mercado...*")
+            st.markdown(t(lang_code, "thinking"))
 
     try:
         result = ask(question, history=history, image=image)
     except Exception:
-        result = {
-            "text": "Algo falló de forma inesperada procesando tu pregunta. Intenta de nuevo en un momento.",
-            "news": [],
-        }
+        result = {"text": t(lang_code, "unexpected_error"), "news": []}
 
     # Se reemplaza la bubble animada por una estática ya con la respuesta real.
     thinking.empty()
