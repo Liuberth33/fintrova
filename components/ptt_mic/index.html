@@ -42,6 +42,13 @@
   #btn.disabled {
     opacity: 0.5;
   }
+  #btn.busy {
+    animation: shake 0.3s;
+  }
+  @keyframes shake {
+    25% { transform: translateX(-3px); }
+    75% { transform: translateX(3px); }
+  }
 </style>
 </head>
 <body>
@@ -67,7 +74,9 @@ let recognition = null;
 let lang = "es-ES";
 let listening = false;
 let hardStopTimer = null;
-const MAX_RECORDING_MS = 15000;
+// Techo total del gesto completo (puede incluir varias sesiones
+// encadenadas si el motor se reinicia solo), no por sesión individual.
+const MAX_RECORDING_MS = 30000;
 
 function post(payload) {
   window.parent.postMessage(Object.assign({ isStreamlitMessage: true }, payload), "*");
@@ -99,10 +108,18 @@ if (!SpeechRecognitionImpl) {
   btn.title = "Tu navegador no soporta reconocimiento de voz (usa Chrome o Edge).";
 } else {
   let fullTranscript = "";
+  // `held`: ¿el usuario sigue con el dedo/mouse presionado ahora mismo?
+  // `listening`: ¿hay una sesión de recognition activa ahora mismo?
+  // Son cosas distintas: Chrome a veces termina una sesión sola (pausas
+  // largas, límites internos del motor) aunque el usuario siga con el
+  // botón presionado — antes eso cortaba la frase a la mitad y perdía
+  // todo lo que se dijera después. Ahora, si `held` sigue en true cuando
+  // llega onend, se reinicia la escucha sola en vez de terminar,
+  // encadenando sesiones sin perder lo ya transcrito.
+  let held = false;
 
   function startRec() {
     if (listening) return;
-    fullTranscript = "";
     recognition = new SpeechRecognitionImpl();
     recognition.lang = lang;
     // continuous=true: sin esto, el navegador decide solo cuándo
@@ -119,20 +136,34 @@ if (!SpeechRecognitionImpl) {
         }
       }
     };
-    recognition.onerror = () => {
+    recognition.onerror = (e) => {
       listening = false;
+      // "no-speech" es común y no destructivo (silencio momentáneo) — si
+      // se sigue presionando el botón, se reintenta en vez de rendirse.
+      if (held && e.error === "no-speech") {
+        startRec();
+        return;
+      }
+      held = false;
       clearTimeout(hardStopTimer);
       btn.classList.remove("recording", "processing");
     };
     recognition.onend = () => {
-      // Entre llamar a recognition.stop() y que este evento realmente
-      // dispare puede pasar varios segundos — el motor de reconocimiento
-      // de Chrome sigue "cerrando" la sesión con su backend en la nube
-      // antes de soltar el resultado final. Eso es inherente a la Web
-      // Speech API en modo continuous, no un bug del botón — pero el botón
-      // sí deja de verse "pegado en grabación" apenas se suelta (ver
-      // stopRec), en vez de quedarse así hasta que esto llegue.
       listening = false;
+      if (held) {
+        // El motor cortó la sesión solo pero el botón sigue presionado —
+        // se reinicia sin avisar (ni enviar nada todavía) para no perder
+        // el resto de lo que el usuario siga diciendo.
+        startRec();
+        return;
+      }
+      // Entre llamar a recognition.stop() (al soltar) y que este evento
+      // realmente dispare puede pasar varios segundos — el motor de
+      // reconocimiento de Chrome sigue "cerrando" la sesión con su backend
+      // en la nube antes de soltar el resultado final. Eso es inherente a
+      // la Web Speech API, no un bug del botón — pero el botón sí deja de
+      // verse "pegado en grabación" apenas se suelta (ver stopRec), en vez
+      // de quedarse así hasta que esto llegue.
       clearTimeout(hardStopTimer);
       btn.classList.remove("recording", "processing");
       if (fullTranscript.trim()) {
@@ -144,17 +175,13 @@ if (!SpeechRecognitionImpl) {
       listening = true;
       btn.classList.remove("processing");
       btn.classList.add("recording");
-      // Red de seguridad: si por lo que sea nunca se detecta el soltar,
-      // esto igual corta la grabación en vez de dejarla escuchando ruido
-      // ambiente indefinidamente.
-      clearTimeout(hardStopTimer);
-      hardStopTimer = setTimeout(stopRec, MAX_RECORDING_MS);
     } catch (err) {
       listening = false;
     }
   }
 
   function stopRec() {
+    held = false;
     if (recognition && listening) {
       // Feedback visual inmediato: al soltar, se ve al toque que dejó de
       // grabar y está procesando, en vez de seguir pareciendo "grabando"
@@ -166,7 +193,23 @@ if (!SpeechRecognitionImpl) {
   }
 
   body.addEventListener("pointerdown", (e) => {
+    if (listening) {
+      // Sesión anterior todavía cerrando en el fondo (el delay de varios
+      // segundos de onend) — se ignora el nuevo press, pero con una señal
+      // visual en vez de no hacer nada sin explicación.
+      btn.classList.add("busy");
+      setTimeout(() => btn.classList.remove("busy"), 300);
+      return;
+    }
     body.setPointerCapture(e.pointerId);
+    held = true;
+    fullTranscript = ""; // se resetea solo al iniciar un gesto de presión nuevo, no en cada reinicio interno
+    clearTimeout(hardStopTimer);
+    // Red de seguridad para todo el gesto (no por sesión individual, ya
+    // que ahora puede haber varias encadenadas): si por lo que sea nunca
+    // se detecta el soltar, esto corta igual en vez de escuchar ruido
+    // ambiente sin límite.
+    hardStopTimer = setTimeout(stopRec, MAX_RECORDING_MS);
     startRec();
   });
   body.addEventListener("pointerup", stopRec);
