@@ -3,6 +3,7 @@ import html
 from pathlib import Path
 
 import streamlit as st
+from streamlit_mic_recorder import speech_to_text
 
 import db
 from agent import ask
@@ -91,22 +92,48 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
         render_news(message.get("news", []))
 
+# Reconocimiento de voz nativo del navegador (Web Speech API vía
+# streamlit-mic-recorder) — sin STT propio ni API key nueva, pero el
+# navegador necesita saber de antemano en qué idioma escuchar, así que hace
+# falta elegirlo antes de grabar (a diferencia del texto, donde el idioma
+# de la pregunta se detecta después, ver agent._reply_language_directive).
+# Solo funciona en navegadores basados en Chromium (Chrome/Edge); Firefox y
+# Safari no implementan esta API del navegador.
+mic_col, lang_col = st.columns([1, 4])
+with lang_col:
+    voice_lang_label = st.selectbox(
+        "Idioma de voz", ["🇪🇸 Español", "🇺🇸 English"],
+        label_visibility="collapsed", key="voice_lang",
+    )
+with mic_col:
+    voice_text = speech_to_text(
+        language="es-ES" if "Español" in voice_lang_label else "en-US",
+        start_prompt="🎙️",
+        stop_prompt="⏹️",
+        just_once=True,
+        use_container_width=True,
+        key="mic_input",
+    )
+
 submission = st.chat_input(
     "¿Cómo está el EUR/USD hoy? ¿Hay señal de compra en Apple?",
     accept_file=True,
     file_type=["png", "jpg", "jpeg"],
 )
 
-if submission:
-    question = submission.text or "Analiza este gráfico."
+if submission or voice_text:
     image = None
     image_b64 = None
 
-    if submission.files:
-        uploaded = submission.files[0]
-        image_bytes = uploaded.getvalue()
-        image_b64 = base64.b64encode(image_bytes).decode()
-        image = {"media_type": uploaded.type or "image/png", "data": image_b64}
+    if submission:
+        question = submission.text or "Analiza este gráfico."
+        if submission.files:
+            uploaded = submission.files[0]
+            image_bytes = uploaded.getvalue()
+            image_b64 = base64.b64encode(image_bytes).decode()
+            image = {"media_type": uploaded.type or "image/png", "data": image_b64}
+    else:
+        question = voice_text
 
     history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
 

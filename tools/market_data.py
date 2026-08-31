@@ -119,7 +119,12 @@ def get_price(symbol: str) -> dict:
 
     if _is_commodity(resolved):
         name, data = _get_commodity_series(resolved)
-        latest = data[0]
+        # Mismo caso que en get_history: el punto más reciente puede venir
+        # como "." (sin dato ese día), hay que saltarlo y tomar el primero
+        # que sí tenga un valor real.
+        latest = next((point for point in data if point["value"] not in (".", "", None)), None)
+        if latest is None:
+            raise RuntimeError(f"Alpha Vantage no tiene datos recientes válidos para '{name}'.")
         return {
             "symbol": name,
             "price": float(latest["value"]),
@@ -181,7 +186,11 @@ def get_history(symbol: str, days: int = 30, full: bool = False) -> list[dict]:
 
     if _is_commodity(resolved):
         _, data = _get_commodity_series(resolved)
-        points = data if full else data[:days]
+        # Alpha Vantage devuelve "." como valor en días sin dato (fines de
+        # semana/feriados) en vez de omitir el punto — hay que filtrarlos,
+        # si no float() revienta.
+        valid = [point for point in data if point["value"] not in (".", "", None)]
+        points = valid if full else valid[:days]
         return [{"date": point["date"], "close": float(point["value"])} for point in points]
 
     if _is_crypto_pair(resolved):

@@ -3,6 +3,7 @@ import os
 
 import anthropic
 from dotenv import load_dotenv
+from langdetect import LangDetectException, detect
 
 from tools.alerts import generate_alert
 from tools.backtest import backtest_rsi_signal
@@ -16,6 +17,14 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 MODEL = "claude-sonnet-5"
 
 SYSTEM_PROMPT = (
+    "LANGUAGE RULE (top priority, overrides everything below): detect the "
+    "language of the user's most recent message and reply ENTIRELY in that "
+    "language. If their message is in English, your whole answer must be in "
+    "English, with zero Spanish words — even though the rest of this system "
+    "prompt, the tool names, and the tool descriptions are written in "
+    "Spanish. That is just internal configuration and must NOT leak into "
+    "your response language. If their message is in Spanish, answer "
+    "entirely in Spanish. Never mix both languages in one response.\n\n"
     "Eres Fintrova, un analista financiero personal. Respondes preguntas de "
     "mercado en lenguaje natural usando datos reales de precios, noticias e "
     "indicadores técnicos. Sé directo y concreto: da el dato, el análisis "
@@ -29,7 +38,11 @@ SYSTEM_PROMPT = (
     "directamente con tu visión: identifica patrones, soportes/resistencias "
     "visibles, tendencia y cualquier indicador que se vea en el chart. Si "
     "el activo del gráfico es identificable, puedes complementar con datos "
-    "reales llamando a las tools disponibles."
+    "reales llamando a las tools disponibles.\n\n"
+    "Responde siempre en el mismo idioma en que está escrita la pregunta del "
+    "usuario (español o inglés), sin importar en qué idioma esté este "
+    "prompt de sistema. Si el usuario cambia de idioma a mitad de la "
+    "conversación, sigue el idioma del mensaje más reciente."
 )
 
 TOOLS = [
@@ -255,6 +268,29 @@ def _friendly_error_message(error: Exception) -> str:
 
 MAX_HISTORY_MESSAGES = 12
 
+# La instrucción de idioma puesta solo en SYSTEM_PROMPT no basta: el resto
+# del prompt (tools, descripciones) está en español y ahoga esa instrucción
+# — probado en vivo, el modelo seguía respondiendo en español a preguntas en
+# inglés. Por eso se refuerza por turno con detección real de idioma,
+# inyectada directamente en el mensaje del usuario (el modelo obedece mucho
+# mejor una instrucción en el turno actual que una enterrada en el system
+# prompt junto a un montón de texto en el otro idioma).
+LANGUAGE_DIRECTIVES = {
+    "en": (
+        "[Reply entirely in English for this message. Do not use any "
+        "Spanish, even though tool names/descriptions are in Spanish.]\n\n"
+    ),
+    "es": "[Responde enteramente en español para este mensaje.]\n\n",
+}
+
+
+def _reply_language_directive(text: str) -> str:
+    try:
+        lang = detect(text)
+    except LangDetectException:
+        lang = "es"
+    return LANGUAGE_DIRECTIVES["en" if lang == "en" else "es"]
+
 
 def ask(question: str, history: list[dict] | None = None, image: dict | None = None) -> dict:
     """Envía una pregunta al agente y devuelve {"text": ..., "news": [...]},
@@ -279,16 +315,18 @@ def ask(question: str, history: list[dict] | None = None, image: dict | None = N
         for turn in (history or [])[-MAX_HISTORY_MESSAGES:]
     ]
 
+    directive = _reply_language_directive(question)
+
     if image:
         current_turn_content = [
             {
                 "type": "image",
                 "source": {"type": "base64", "media_type": image["media_type"], "data": image["data"]},
             },
-            {"type": "text", "text": question},
+            {"type": "text", "text": directive + question},
         ]
     else:
-        current_turn_content = question
+        current_turn_content = directive + question
 
     messages = past_turns + [{"role": "user", "content": current_turn_content}]
     news: list[dict] = []

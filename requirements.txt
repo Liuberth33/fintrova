@@ -3,3 +3,5 @@ streamlit
 requests
 pandas
 python-dotenv
+langdetect
+streamlit-mic-recorder
