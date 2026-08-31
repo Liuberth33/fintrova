@@ -3,12 +3,16 @@ import html
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 import db
 from agent import ask
 from i18n import t
-from voice_component import ptt_mic
+
+# Nota: el micrófono push-to-talk (voice_component.ptt_mic, ver
+# components/ptt_mic/) queda pausado por ahora — no capturaba audio de
+# forma confiable en pruebas reales (el reconocimiento se activaba pero no
+# devolvía texto). El código del componente sigue intacto en el repo para
+# retomarlo más adelante, solo se sacó la integración de acá.
 
 db.init_db()
 
@@ -194,88 +198,22 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
         render_news(message.get("news", []))
 
-# El botón del mic flota fijo junto a la flecha de enviar del chat_input,
-# independiente de ese control — no se puede insertar literalmente dentro
-# del chat_input (es un widget nativo cerrado de Streamlit). Solo funciona
-# en navegadores basados en Chromium (Chrome/Edge); Firefox y Safari no
-# implementan la Web Speech API que usa components/ptt_mic.
-# st.container(key=...) genera una clase estable (.st-key-mic_dock) para
-# reposicionarlo con CSS sin tocar el DOM de otros widgets.
-st.markdown(
-    """
-    <style>
-    .st-key-mic_dock {
-        position: fixed;
-        width: 46px;
-        z-index: 1000000; /* el header nativo de Streamlit usa 999990 */
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-with st.container(key="mic_dock"):
-    voice_text = ptt_mic(
-        language="es-ES" if lang_code == "es" else "en-US",
-        hold_title=t(lang_code, "mic_hold_title"),
-        unsupported_text=t(lang_code, "mic_unsupported"),
-        unsupported_title=t(lang_code, "mic_unsupported_title"),
-        key="mic_input",
-    )
-
-# Un offset fijo (right: Npx) no sirve porque el chat_input vive en una
-# columna centrada de ancho variable, no pegada al borde real de la
-# ventana — con la barra lateral abierta/cerrada o distinto ancho de
-# pantalla el mic quedaba lejos de la flecha. En su lugar, mide la
-# posición real del chat_input en cada resize/rerun y pega el mic justo a
-# su derecha. st.markdown con <script> no ejecuta JS (Streamlit lo inserta
-# vía innerHTML, que ignora <script>) — por eso va en components.html, que
-# sí carga un documento real, y desde ahí se llega al DOM de la página
-# principal vía window.parent (mismo origen, lo mismo que usa
-# components/ptt_mic para postMessage).
-components.html(
-    """
-    <script>
-    (function() {
-      function alignMicDock() {
-        var doc = window.parent.document;
-        var chatInput = doc.querySelector('[data-testid="stChatInput"]');
-        var micDock = doc.querySelector('.st-key-mic_dock');
-        if (!chatInput || !micDock) return;
-        var rect = chatInput.getBoundingClientRect();
-        micDock.style.left = (rect.right + 10) + 'px';
-        micDock.style.top = (rect.top + rect.height / 2 - 19) + 'px';
-      }
-      if (window.parent._fintrovaMicAlignInterval) {
-        clearInterval(window.parent._fintrovaMicAlignInterval);
-      }
-      window.parent.addEventListener('resize', alignMicDock);
-      window.parent._fintrovaMicAlignInterval = setInterval(alignMicDock, 400);
-      alignMicDock();
-    })();
-    </script>
-    """,
-    height=0,
-)
-
 submission = st.chat_input(
     t(lang_code, "chat_placeholder"),
     accept_file=True,
     file_type=["png", "jpg", "jpeg"],
 )
 
-if submission or voice_text:
+if submission:
     image = None
     image_b64 = None
 
-    if submission:
-        question = submission.text or "Analiza este gráfico."
-        if submission.files:
-            uploaded = submission.files[0]
-            image_bytes = uploaded.getvalue()
-            image_b64 = base64.b64encode(image_bytes).decode()
-            image = {"media_type": uploaded.type or "image/png", "data": image_b64}
-    else:
-        question = voice_text
+    question = submission.text or "Analiza este gráfico."
+    if submission.files:
+        uploaded = submission.files[0]
+        image_bytes = uploaded.getvalue()
+        image_b64 = base64.b64encode(image_bytes).decode()
+        image = {"media_type": uploaded.type or "image/png", "data": image_b64}
 
     history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
 
