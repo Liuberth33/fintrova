@@ -335,7 +335,10 @@ def ask(question: str, history: list[dict] | None = None, image: dict | None = N
         try:
             response = client.messages.create(
                 model=MODEL,
-                max_tokens=1024,
+                # 1024 se quedaba corto para respuestas con varias secciones
+                # (precio + sentimiento + técnico + resumen) — se vio
+                # cortando la respuesta a mitad de frase en producción.
+                max_tokens=4096,
                 system=SYSTEM_PROMPT,
                 tools=TOOLS,
                 messages=messages,
