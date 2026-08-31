@@ -24,6 +24,10 @@
     background: #C08A34;
     transform: scale(0.97);
   }
+  #btn.processing {
+    background: #8a8a8a;
+    opacity: 0.85;
+  }
   #btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
@@ -35,9 +39,10 @@
 <script>
 // Componente Streamlit "a mano" (sin build step, sin streamlit-component-lib):
 // implementa el protocolo postMessage directamente. Push-to-talk real
-// (mousedown/touchstart empieza a grabar, mouseup/touchend/mouseleave
-// detiene) usando la Web Speech API nativa del navegador — sin backend de
-// transcripción propio ni servicios de terceros no oficiales.
+// (mousedown/touchstart en el botón empieza a grabar; mouseup/touchend
+// escuchados en window, no solo en el botón, detienen) usando la Web
+// Speech API nativa del navegador — sin backend de transcripción propio
+// ni servicios de terceros no oficiales.
 const btn = document.getElementById("btn");
 let recognition = null;
 let lang = "es-ES";
@@ -98,11 +103,18 @@ if (!SpeechRecognitionImpl) {
     };
     recognition.onerror = () => {
       listening = false;
-      btn.classList.remove("recording");
+      btn.classList.remove("recording", "processing");
     };
     recognition.onend = () => {
+      // Entre llamar a recognition.stop() y que este evento realmente
+      // dispare puede pasar varios segundos — el motor de reconocimiento
+      // de Chrome sigue "cerrando" la sesión con su backend en la nube
+      // antes de soltar el resultado final. Eso es inherente a la Web
+      // Speech API en modo continuous, no un bug del botón — pero el botón
+      // sí puede (y debía) dejar de verse "pegado en grabación" apenas se
+      // suelta, en vez de quedarse con el estado "recording" hasta acá.
       listening = false;
-      btn.classList.remove("recording");
+      btn.classList.remove("recording", "processing");
       if (fullTranscript.trim()) {
         sendValue({ text: fullTranscript.trim(), id: Date.now() });
       }
@@ -110,6 +122,7 @@ if (!SpeechRecognitionImpl) {
     try {
       recognition.start();
       listening = true;
+      btn.classList.remove("processing");
       btn.classList.add("recording");
     } catch (err) {
       listening = false;
@@ -118,15 +131,26 @@ if (!SpeechRecognitionImpl) {
 
   function stopRec() {
     if (recognition && listening) {
+      // Feedback visual inmediato: al soltar, se ve al toque que dejó de
+      // grabar y está procesando, en vez de seguir pareciendo "grabando"
+      // durante los varios segundos que tarda onend en llegar de verdad.
+      btn.classList.remove("recording");
+      btn.classList.add("processing");
       recognition.stop();
     }
   }
 
   btn.addEventListener("mousedown", startRec);
-  btn.addEventListener("mouseup", stopRec);
-  btn.addEventListener("mouseleave", stopRec);
   btn.addEventListener("touchstart", (e) => { e.preventDefault(); startRec(); });
-  btn.addEventListener("touchend", (e) => { e.preventDefault(); stopRec(); });
+
+  // El soltar se escucha en window, no solo en el botón: si el cursor se
+  // corre un poco mientras se mantiene presionado (normal en un gesto de
+  // "mantener apretado"), el mouseup puede terminar disparando sobre otro
+  // elemento y nunca llegarle al botón — dejando la grabación realmente
+  // encendida de fondo aunque visualmente pareciera soltado.
+  window.addEventListener("mouseup", stopRec);
+  window.addEventListener("touchend", (e) => { e.preventDefault(); stopRec(); });
+  window.addEventListener("touchcancel", (e) => { e.preventDefault(); stopRec(); });
   btn.addEventListener("touchcancel", (e) => { e.preventDefault(); stopRec(); });
 }
 </script>

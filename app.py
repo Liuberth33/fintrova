@@ -107,7 +107,12 @@ with st.sidebar:
                     _switch_conversation(conv["id"])
                     st.rerun()
             with delete_col:
-                if st.button("🗑️", key=f"_delete_conv_{conv['id']}", use_container_width=True):
+                # Ícono Material nativo de Streamlit (fuente vectorial propia,
+                # no el emoji del sistema operativo) — el emoji 🗑️ rendía
+                # distinto en tamaño/posición según la fuente de emoji de cada
+                # SO (confirmado: la caja del botón medía idéntica en ambos
+                # casos, la diferencia era puramente del glifo del emoji).
+                if st.button("", icon=":material/delete:", key=f"_delete_conv_{conv['id']}", use_container_width=True):
                     db.delete_conversation(conv["id"])
                     if is_active:
                         remaining = db.list_conversations()
