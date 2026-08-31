@@ -72,15 +72,29 @@ if (!SpeechRecognitionImpl) {
   btn.disabled = true;
   btn.title = "Tu navegador no soporta reconocimiento de voz (usa Chrome o Edge).";
 } else {
+  let fullTranscript = "";
+
   function startRec() {
     if (listening) return;
+    fullTranscript = "";
     recognition = new SpeechRecognitionImpl();
     recognition.lang = lang;
+    // continuous=true es la parte clave: sin esto, el navegador decide por
+    // su cuenta cuándo "terminaste de hablar" (apenas detecta una pausa) y
+    // corta la sesión sola, en vez de esperar a que sueltes el botón —
+    // eso se sentía como un corte fijo a los ~5s en frases con pausas
+    // naturales. Con continuous=true sigue escuchando y acumulando
+    // resultados hasta que se llama recognition.stop() explícitamente.
+    recognition.continuous = true;
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
     recognition.onresult = (e) => {
-      const transcript = e.results[0][0].transcript;
-      if (transcript) sendValue({ text: transcript, id: Date.now() });
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          const piece = e.results[i][0].transcript.trim();
+          if (piece) fullTranscript += (fullTranscript ? " " : "") + piece;
+        }
+      }
     };
     recognition.onerror = () => {
       listening = false;
@@ -89,6 +103,9 @@ if (!SpeechRecognitionImpl) {
     recognition.onend = () => {
       listening = false;
       btn.classList.remove("recording");
+      if (fullTranscript.trim()) {
+        sendValue({ text: fullTranscript.trim(), id: Date.now() });
+      }
     };
     try {
       recognition.start();
