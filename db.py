@@ -24,6 +24,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
+                last_symbol TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
@@ -45,6 +46,7 @@ def init_db() -> None:
             )
         """)
         _migrate_add_conversation_id(conn)
+        _migrate_add_last_symbol(conn)
 
 
 def _migrate_add_conversation_id(conn: sqlite3.Connection) -> None:
@@ -66,6 +68,17 @@ def _migrate_add_conversation_id(conn: sqlite3.Connection) -> None:
     name = _truncate_topic(first_user_msg) if first_user_msg else "Conversación anterior"
     cursor = conn.execute("INSERT INTO conversations (name) VALUES (?)", (name,))
     conn.execute("UPDATE messages SET conversation_id = ? WHERE conversation_id IS NULL", (cursor.lastrowid,))
+
+
+def _migrate_add_last_symbol(conn: sqlite3.Connection) -> None:
+    """Si `conversations` ya existía de antes del placeholder contextual
+    (sin last_symbol), agrega la columna — queda NULL en las filas viejas,
+    que simplemente vuelven a mostrar el placeholder genérico hasta que se
+    consulte algo nuevo en esa conversación."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(conversations)")}
+    if "last_symbol" in columns:
+        return
+    conn.execute("ALTER TABLE conversations ADD COLUMN last_symbol TEXT")
 
 
 def create_conversation(name: str) -> int:
@@ -91,6 +104,20 @@ def list_conversations() -> list[dict]:
 def rename_conversation(conversation_id: int, name: str) -> None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("UPDATE conversations SET name = ? WHERE id = ?", (name, conversation_id))
+
+
+def get_last_symbol(conversation_id: int) -> str | None:
+    """Último símbolo consultado en esta conversación (ver agent.ask ->
+    last_symbol) — la UI lo usa para sugerir un placeholder contextual en
+    el chat_input en vez de siempre mostrar el mismo ejemplo genérico."""
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute("SELECT last_symbol FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+    return row[0] if row else None
+
+
+def set_last_symbol(conversation_id: int, symbol: str) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("UPDATE conversations SET last_symbol = ? WHERE id = ?", (symbol, conversation_id))
 
 
 def delete_conversation(conversation_id: int) -> None:

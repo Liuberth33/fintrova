@@ -330,6 +330,11 @@ def ask(question: str, history: list[dict] | None = None, image: dict | None = N
 
     messages = past_turns + [{"role": "user", "content": current_turn_content}]
     news: list[dict] = []
+    # Último símbolo consultado por alguna tool en este turno — la UI lo usa
+    # para armar un placeholder de seguimiento contextual en el chat_input
+    # (ej. "¿Cómo está XAG hoy?" en vez de siempre sugerir EUR/USD/Apple),
+    # en vez de tratar de adivinar el tema parseando texto libre.
+    last_symbol: str | None = None
 
     while True:
         try:
@@ -344,11 +349,11 @@ def ask(question: str, history: list[dict] | None = None, image: dict | None = N
                 messages=messages,
             )
         except anthropic.APIError as error:
-            return {"text": _friendly_error_message(error), "news": news}
+            return {"text": _friendly_error_message(error), "news": news, "last_symbol": last_symbol}
 
         if response.stop_reason != "tool_use":
             text = "".join(block.text for block in response.content if block.type == "text")
-            return {"text": text, "news": news}
+            return {"text": text, "news": news, "last_symbol": last_symbol}
 
         messages.append({"role": "assistant", "content": response.content})
 
@@ -356,6 +361,8 @@ def ask(question: str, history: list[dict] | None = None, image: dict | None = N
         for block in response.content:
             if block.type != "tool_use":
                 continue
+            if "symbol" in block.input:
+                last_symbol = block.input["symbol"]
             try:
                 result = _execute_tool(block.name, block.input)
                 if block.name == "get_news":

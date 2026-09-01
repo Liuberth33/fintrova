@@ -198,8 +198,22 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
         render_news(message.get("news", []))
 
+# Placeholder contextual: si ya se consultó algún símbolo en esta
+# conversación, sugiere seguir con ESE activo en vez de mostrar siempre el
+# mismo ejemplo genérico de EUR/USD y Apple — se basa en el símbolo real
+# que usó la última tool que llamó el agente (ver agent.ask -> last_symbol),
+# no en tratar de adivinar el tema parseando el texto de la respuesta.
+# Se persiste en la DB (no solo session_state) para que sobreviva un
+# refresh de página, igual que el resto de la conversación.
+current_symbol = db.get_last_symbol(st.session_state.conversation_id)
+placeholder = (
+    t(lang_code, "chat_placeholder_contextual", symbol=current_symbol)
+    if current_symbol
+    else t(lang_code, "chat_placeholder")
+)
+
 submission = st.chat_input(
-    t(lang_code, "chat_placeholder"),
+    placeholder,
     accept_file=True,
     file_type=["png", "jpg", "jpeg"],
 )
@@ -237,6 +251,9 @@ if submission:
     except Exception:
         result = {"text": t(lang_code, "unexpected_error"), "news": []}
 
+    if result.get("last_symbol"):
+        db.set_last_symbol(st.session_state.conversation_id, result["last_symbol"])
+
     # Se reemplaza la bubble animada por una estática ya con la respuesta real.
     thinking.empty()
     with st.chat_message("assistant", avatar=LOGO_MARK):
@@ -244,3 +261,8 @@ if submission:
         render_news(result["news"])
     st.session_state.messages.append({"role": "assistant", "content": result["text"], "news": result["news"]})
     db.save_message(st.session_state.conversation_id, "assistant", result["text"], result["news"])
+
+    # Sin este rerun, el placeholder contextual (arriba) quedaría mostrando
+    # el símbolo de la respuesta ANTERIOR hasta la próxima interacción — se
+    # construye antes de llegar acá, en el mismo paso de ejecución.
+    st.rerun()
