@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Test de micrófono aislado</title>
+<style>
+  body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; }
+  button { font-size: 24px; padding: 20px 40px; cursor: pointer; }
+  button.recording { background: #C08A34; color: white; }
+  #log { margin-top: 20px; padding: 15px; background: #f0f0f0; border-radius: 8px; white-space: pre-wrap; min-height: 100px; }
+  #transcript { margin-top: 20px; padding: 15px; background: #e8f5e9; border-radius: 8px; min-height: 60px; font-size: 18px; }
+</style>
+</head>
+<body>
+<h1>Test de micrófono (sin Fintrova, sin iframe)</h1>
+<p>Mantén presionado el botón, di algo, suelta. Mira qué aparece abajo.</p>
+<button id="btn">🎙️ Mantén presionado</button>
+<div id="transcript"><em>(acá debería aparecer lo que digas)</em></div>
+<h3>Log técnico:</h3>
+<div id="log"></div>
+
+<script>
+const btn = document.getElementById("btn");
+const log = document.getElementById("log");
+const transcriptDiv = document.getElementById("transcript");
+
+function addLog(msg) {
+  const time = new Date().toLocaleTimeString();
+  log.textContent += `[${time}] ${msg}\n`;
+  log.scrollTop = log.scrollHeight;
+}
+
+const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+addLog(`SpeechRecognition disponible: ${!!SpeechRecognitionImpl}`);
+addLog(`Contexto seguro (isSecureContext): ${window.isSecureContext}`);
+addLog(`navigator.mediaDevices disponible: ${!!navigator.mediaDevices}`);
+
+let recognition = null;
+
+// Primero probamos acceso directo al micrófono (getUserMedia) para ver si
+// el navegador realmente recibe audio, aparte de la Web Speech API.
+navigator.mediaDevices.enumerateDevices().then(devices => {
+  const mics = devices.filter(d => d.kind === "audioinput");
+  addLog(`Micrófonos detectados: ${mics.length}`);
+  mics.forEach(m => addLog(`  - ${m.label || "(sin nombre, falta permiso)"}`));
+}).catch(err => addLog(`Error listando dispositivos: ${err}`));
+
+function startRec() {
+  transcriptDiv.textContent = "(escuchando...)";
+  recognition = new SpeechRecognitionImpl();
+  recognition.lang = "es-ES";
+  recognition.continuous = true;
+  recognition.interimResults = true; // acá SÍ queremos ver resultados parciales, para diagnosticar
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => addLog("onstart: reconocimiento arrancó");
+  recognition.onaudiostart = () => addLog("onaudiostart: el motor empezó a recibir audio");
+  recognition.onsoundstart = () => addLog("onsoundstart: se detectó SONIDO (no necesariamente voz)");
+  recognition.onspeechstart = () => addLog("onspeechstart: se detectó VOZ");
+  recognition.onspeechend = () => addLog("onspeechend: dejó de detectar voz");
+  recognition.onsoundend = () => addLog("onsoundend: dejó de detectar sonido");
+  recognition.onaudioend = () => addLog("onaudioend: el motor dejó de recibir audio");
+  recognition.onresult = (e) => {
+    let text = "";
+    for (let i = 0; i < e.results.length; i++) {
+      text += e.results[i][0].transcript + " ";
+    }
+    addLog(`onresult: "${text.trim()}" (isFinal=${e.results[e.results.length-1].isFinal})`);
+    transcriptDiv.textContent = text.trim() || "(vacío)";
+  };
+  recognition.onerror = (e) => addLog(`onerror: ${e.error}`);
+  recognition.onend = () => {
+    addLog("onend: sesión terminada");
+    btn.classList.remove("recording");
+  };
+
+  recognition.start();
+  btn.classList.add("recording");
+}
+
+function stopRec() {
+  if (recognition) recognition.stop();
+}
+
+btn.addEventListener("mousedown", startRec);
+btn.addEventListener("mouseup", stopRec);
+btn.addEventListener("mouseleave", stopRec);
+</script>
+</body>
+</html>
